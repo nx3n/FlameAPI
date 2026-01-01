@@ -26,10 +26,20 @@ public final class VisualSceneStack {
         if (scene == null) {
             return;
         }
+<<<<<<< ours
+=======
+        if (current != null) {
+            current.exit();
+        }
+>>>>>>> theirs
         current = scene;
         target = null;
         blendProgress = 0f;
         blendDuration = 0f;
+<<<<<<< ours
+=======
+        current.enter();
+>>>>>>> theirs
     }
 
     public void blendTo(VisualScene scene, float seconds) {
@@ -43,14 +53,29 @@ public final class VisualSceneStack {
         target = scene;
         blendDuration = seconds;
         blendProgress = 0f;
+<<<<<<< ours
     }
 
     public void tick(float deltaSeconds) {
+=======
+        target.enter();
+    }
+
+    public void tick(float deltaSeconds) {
+        current.tick(deltaSeconds);
+        if (target != null) {
+            target.tick(deltaSeconds);
+        }
+>>>>>>> theirs
         if (target == null) {
             return;
         }
         blendProgress += deltaSeconds;
         if (blendProgress >= blendDuration) {
+<<<<<<< ours
+=======
+            current.exit();
+>>>>>>> theirs
             current = target;
             target = null;
             blendProgress = 0f;
