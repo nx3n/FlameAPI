@@ -1,11 +1,20 @@
 package nx3n.flameapi.visual;
 
+import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 public final class VisualScene {
     private final String id;
     private final Map<VisualLayerType, Float> intensities = new EnumMap<>(VisualLayerType.class);
+    private final List<VisualEffect> effects = new ArrayList<>();
+    private final VisualProps props = new VisualProps();
+    private final VisualTimeline timeline = new VisualTimeline();
+    private final Map<VisualEventType, List<Consumer<VisualEventContext>>> eventHandlers = new EnumMap<>(VisualEventType.class);
+    private Runnable onEnter;
+    private Runnable onExit;
 
     public VisualScene(String id) {
         this.id = id;
@@ -16,6 +25,14 @@ public final class VisualScene {
 
     public String id() {
         return id;
+    }
+
+    public VisualProps props() {
+        return props;
+    }
+
+    public VisualTimeline timeline() {
+        return timeline;
     }
 
     public VisualScene setIntensity(VisualLayerType type, float intensity) {
@@ -29,6 +46,66 @@ public final class VisualScene {
 
     public boolean enabled(VisualLayerType type) {
         return intensity(type) > 0.001f;
+    }
+
+    public VisualScene addEffect(VisualEffect effect) {
+        if (effect != null) {
+            effects.add(effect);
+        }
+        return this;
+    }
+
+    public List<VisualEffect> effects() {
+        return effects;
+    }
+
+    public VisualScene onEnter(Runnable action) {
+        this.onEnter = action;
+        return this;
+    }
+
+    public VisualScene onExit(Runnable action) {
+        this.onExit = action;
+        return this;
+    }
+
+    public VisualScene onEvent(VisualEventType type, Consumer<VisualEventContext> handler) {
+        eventHandlers.computeIfAbsent(type, key -> new ArrayList<>()).add(handler);
+        return this;
+    }
+
+    void enter() {
+        if (onEnter != null) {
+            onEnter.run();
+        }
+        dispatchEvent(new VisualEventContext(VisualEventType.ENTER_SCENE, this));
+    }
+
+    void exit() {
+        if (onExit != null) {
+            onExit.run();
+        }
+        dispatchEvent(new VisualEventContext(VisualEventType.EXIT_SCENE, this));
+    }
+
+    void dispatchEvent(VisualEventContext context) {
+        List<Consumer<VisualEventContext>> handlers = eventHandlers.get(context.type());
+        if (handlers == null) {
+            return;
+        }
+        for (Consumer<VisualEventContext> handler : handlers) {
+            handler.accept(context);
+        }
+    }
+
+    void tick(float deltaSeconds) {
+        float time = props.getFloat("time", 0f) + deltaSeconds;
+        props.set("time", time);
+        timeline.apply(props, time);
+        effects.removeIf(effect -> {
+            effect.tick(deltaSeconds);
+            return effect.expired();
+        });
     }
 
     private float clamp(float value) {
