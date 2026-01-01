@@ -1,0 +1,77 @@
+### === OS ===
+.DS_Store
+Thumbs.db
+
+### === IntelliJ IDEA ===
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+
+### === Gradle ===
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+### === Logs / Runtime ===
+logs/
+run/
+crash-reports/
+
+### === Forge / Minecraft ===
+*.log
+*.log.gz
+*.dat
+*.lock
+*.lck
+*.cache
+*.tmp
+*.bak
+
+### === Java ===
+*.class
+hs_err_pid*
+
+### === Launch configs ===
+*.launch
+*.run.xml
+
+### === Mixin / Refmap / Mapping temp ===
+*.refmap.json
+*.tsrg
+*.srg
+*.mapping
+*.mappings
+
+### === Generated / Cached ===
+generated/
+.cache/
+.tmp/
+.tmp_cache/
+
+### === IDE / Tool junk ===
+.vscode/
+.settings/
+.project
+.classpath
+
+### === Secrets ===
+.env
+.env.*
+*.keystore
+*.jks
+
+### === Packaging ===
+*.jar
+*.zip
+*.tar.gz
+
+### === Native / misc ===
+*.dll
+*.so
+*.dylib
+
+### === User-specific ===
+*.user
+*.prefs
