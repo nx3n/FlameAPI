@@ -86,21 +86,146 @@ index 729475e5040250aa92ff9147abfbd428f040857d..2e556f6ffb79126b66bad8b02c8f617d
          }
      }
  }
+diff --git a/src/main/java/nx3n/flameapi/visual/Effects.java b/src/main/java/nx3n/flameapi/visual/Effects.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..0531244d55c4741ae3a96a10eb5b67f760efe555
+--- /dev/null
++++ b/src/main/java/nx3n/flameapi/visual/Effects.java
+@@ -0,0 +1,37 @@
++package nx3n.flameapi.visual;
++
++import nx3n.flameapi.visual.effects.BlurEffect;
++import nx3n.flameapi.visual.effects.ColorShiftEffect;
++import nx3n.flameapi.visual.effects.LabelEffect;
++import nx3n.flameapi.visual.effects.NoiseEffect;
++import nx3n.flameapi.visual.effects.ScanlineEffect;
++import nx3n.flameapi.visual.effects.VignetteEffect;
++
++public final class Effects {
++    private Effects() {
++    }
++
++    public static BlurEffect blur() {
++        return new BlurEffect(VisualLayerType.SCREEN);
++    }
++
++    public static VignetteEffect vignette() {
++        return new VignetteEffect(VisualLayerType.SCREEN);
++    }
++
++    public static ColorShiftEffect colorShift() {
++        return new ColorShiftEffect(VisualLayerType.SCREEN);
++    }
++
++    public static NoiseEffect noise() {
++        return new NoiseEffect(VisualLayerType.SCREEN);
++    }
++
++    public static ScanlineEffect scanlines() {
++        return new ScanlineEffect(VisualLayerType.SCREEN);
++    }
++
++    public static LabelEffect label() {
++        return new LabelEffect(VisualLayerType.HUD);
++    }
++}
+diff --git a/src/main/java/nx3n/flameapi/visual/VisualAnimation.java b/src/main/java/nx3n/flameapi/visual/VisualAnimation.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..68405002992af6308af7af77a06559958d48facc
+--- /dev/null
++++ b/src/main/java/nx3n/flameapi/visual/VisualAnimation.java
+@@ -0,0 +1,72 @@
++package nx3n.flameapi.visual;
++
++public final class VisualAnimation {
++    private final String property;
++    private final VisualEasing easing;
++    private final float from;
++    private final float to;
++    private final float duration;
++    private final float delay;
++    private final boolean loop;
++    private float elapsed;
++
++    public VisualAnimation(String property, VisualEasing easing, float from, float to, float duration, float delay, boolean loop) {
++        this.property = property;
++        this.easing = easing == null ? VisualEasing.LINEAR : easing;
++        this.from = from;
++        this.to = to;
++        this.duration = Math.max(0.001f, duration);
++        this.delay = Math.max(0f, delay);
++        this.loop = loop;
++    }
++
++    public String property() {
++        return property;
++    }
++
++    public VisualEasing easing() {
++        return easing;
++    }
++
++    public float from() {
++        return from;
++    }
++
++    public float to() {
++        return to;
++    }
++
++    public float duration() {
++        return duration;
++    }
++
++    public float delay() {
++        return delay;
++    }
++
++    public boolean loop() {
++        return loop;
++    }
++
++    public void reset() {
++        elapsed = 0f;
++    }
++
++    public boolean tick(float deltaSeconds, VisualProps props) {
++        elapsed += deltaSeconds;
++        if (elapsed < delay) {
++            return false;
++        }
++        float t = Math.min(1f, (elapsed - delay) / duration);
++        float eased = easing.apply(t);
++        props.set(property, from + (to - from) * eased);
++        if (t >= 1f) {
++            if (loop) {
++                elapsed = delay;
++                return false;
++            }
++            return true;
++        }
++        return false;
++    }
++}
 diff --git a/src/main/java/nx3n/flameapi/visual/VisualApi.java b/src/main/java/nx3n/flameapi/visual/VisualApi.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..aacfcd02b1beab57fb2e26b7a156dc6bd631183a
+index 0000000000000000000000000000000000000000..752b743a8784cb6e6337abc7e6fbff7cedd0a91d
 --- /dev/null
 +++ b/src/main/java/nx3n/flameapi/visual/VisualApi.java
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,232 @@
 +package nx3n.flameapi.visual;
 +
 +import com.mojang.logging.LogUtils;
 +import net.minecraft.client.Minecraft;
 +import net.minecraft.client.gui.GuiGraphics;
++import net.minecraft.resources.ResourceKey;
++import net.minecraft.world.entity.player.Player;
++import net.minecraft.world.level.Level;
 +import net.minecraftforge.api.distmarker.Dist;
 +import net.minecraftforge.client.event.RenderGuiEvent;
 +import net.minecraftforge.client.event.RenderLevelStageEvent;
 +import net.minecraftforge.client.event.RenderLivingEvent;
++import net.minecraftforge.event.entity.living.LivingHurtEvent;
 +import net.minecraftforge.event.TickEvent;
 +import net.minecraftforge.eventbus.api.SubscribeEvent;
 +import net.minecraftforge.fml.common.Mod;
@@ -117,6 +242,9 @@ index 0000000000000000000000000000000000000000..aacfcd02b1beab57fb2e26b7a156dc6b
 +    private static final List<VisualEntityEffect> ENTITY_EFFECTS = new CopyOnWriteArrayList<>();
 +    private static final List<VisualScreenEffect> SCREEN_EFFECTS = new CopyOnWriteArrayList<>();
 +    private static final VisualSceneStack SCENES = new VisualSceneStack();
++    private static ResourceKey<Level> lastDimension;
++    private static float lastHealth = -1f;
++    private static float lastSpeed = -1f;
 +    private static boolean bootstrapped;
 +
 +    private VisualApi() {
@@ -127,6 +255,7 @@ index 0000000000000000000000000000000000000000..aacfcd02b1beab57fb2e26b7a156dc6b
 +            return;
 +        }
 +        bootstrapped = true;
++        VisualEffectRegistry.bootstrap();
 +        LOGGER.info("FlameAPI Visuals ready: HUD {}, World {}, Entity {}, Screen {}", HUD_LAYERS.size(), WORLD_EFFECTS.size(), ENTITY_EFFECTS.size(), SCREEN_EFFECTS.size());
 +    }
 +
@@ -146,6 +275,14 @@ index 0000000000000000000000000000000000000000..aacfcd02b1beab57fb2e26b7a156dc6b
 +        SCREEN_EFFECTS.add(effect);
 +    }
 +
++    public static void registerEffect(VisualEffect effect) {
++        SCENES.current().addEffect(effect);
++    }
++
++    public static void activateScene(VisualScene scene, float blendSeconds) {
++        SCENES.blendTo(scene, blendSeconds);
++    }
++
 +    public static VisualSceneStack scenes() {
 +        return SCENES;
 +    }
@@ -156,12 +293,15 @@ index 0000000000000000000000000000000000000000..aacfcd02b1beab57fb2e26b7a156dc6b
 +            return;
 +        }
 +        SCENES.tick(1f / 20f);
++        handlePlayerSignals();
 +    }
 +
 +    @SubscribeEvent
 +    public static void onHudRender(RenderGuiEvent.Post event) {
 +        if (HUD_LAYERS.isEmpty() && SCREEN_EFFECTS.isEmpty()) {
-+            return;
++            if (SCENES.current().effects().isEmpty() && (SCENES.target() == null || SCENES.target().effects().isEmpty())) {
++                return;
++            }
 +        }
 +        Minecraft minecraft = Minecraft.getInstance();
 +        if (minecraft == null) {
@@ -185,15 +325,20 @@ index 0000000000000000000000000000000000000000..aacfcd02b1beab57fb2e26b7a156dc6b
 +                effect.render(screenContext);
 +            }
 +        }
++
++        float blend = SCENES.blendFactor();
++        renderSceneLayer(SCENES.current(), VisualLayerType.HUD, VisualRenderContext.hud(minecraft, guiGraphics, partialTick, screenWidth, screenHeight, 1f), 1f - blend);
++        renderSceneLayer(SCENES.current(), VisualLayerType.SCREEN, VisualRenderContext.screen(minecraft, guiGraphics, partialTick, screenWidth, screenHeight, 1f), 1f - blend);
++        if (SCENES.target() != null) {
++            renderSceneLayer(SCENES.target(), VisualLayerType.HUD, VisualRenderContext.hud(minecraft, guiGraphics, partialTick, screenWidth, screenHeight, 1f), blend);
++            renderSceneLayer(SCENES.target(), VisualLayerType.SCREEN, VisualRenderContext.screen(minecraft, guiGraphics, partialTick, screenWidth, screenHeight, 1f), blend);
++        }
 +    }
 +
 +    @SubscribeEvent
 +    public static void onWorldRender(RenderLevelStageEvent event) {
-+        if (WORLD_EFFECTS.isEmpty()) {
-+            return;
-+        }
 +        float intensity = resolveIntensity(VisualLayerType.WORLD);
-+        if (intensity <= 0f) {
++        if (intensity <= 0f && (SCENES.current().effects().isEmpty() && (SCENES.target() == null || SCENES.target().effects().isEmpty()))) {
 +            return;
 +        }
 +        Minecraft minecraft = Minecraft.getInstance();
@@ -201,15 +346,18 @@ index 0000000000000000000000000000000000000000..aacfcd02b1beab57fb2e26b7a156dc6b
 +        for (VisualWorldEffect effect : WORLD_EFFECTS) {
 +            effect.render(context);
 +        }
++
++        float blend = SCENES.blendFactor();
++        renderSceneLayer(SCENES.current(), VisualLayerType.WORLD, VisualRenderContext.world(minecraft, event.getPoseStack(), event.getStage(), event.getPartialTick(), 1f), 1f - blend);
++        if (SCENES.target() != null) {
++            renderSceneLayer(SCENES.target(), VisualLayerType.WORLD, VisualRenderContext.world(minecraft, event.getPoseStack(), event.getStage(), event.getPartialTick(), 1f), blend);
++        }
 +    }
 +
 +    @SubscribeEvent
 +    public static void onEntityRender(RenderLivingEvent.Post<?, ?> event) {
-+        if (ENTITY_EFFECTS.isEmpty()) {
-+            return;
-+        }
 +        float intensity = resolveIntensity(VisualLayerType.ENTITY);
-+        if (intensity <= 0f) {
++        if (intensity <= 0f && (SCENES.current().effects().isEmpty() && (SCENES.target() == null || SCENES.target().effects().isEmpty()))) {
 +            return;
 +        }
 +        Minecraft minecraft = Minecraft.getInstance();
@@ -217,6 +365,21 @@ index 0000000000000000000000000000000000000000..aacfcd02b1beab57fb2e26b7a156dc6b
 +        for (VisualEntityEffect effect : ENTITY_EFFECTS) {
 +            effect.render(context);
 +        }
++
++        float blend = SCENES.blendFactor();
++        renderSceneLayer(SCENES.current(), VisualLayerType.ENTITY, VisualRenderContext.entity(minecraft, event.getEntity(), event, event.getPartialTick(), 1f), 1f - blend);
++        if (SCENES.target() != null) {
++            renderSceneLayer(SCENES.target(), VisualLayerType.ENTITY, VisualRenderContext.entity(minecraft, event.getEntity(), event, event.getPartialTick(), 1f), blend);
++        }
++    }
++
++    @SubscribeEvent
++    public static void onLivingHurt(LivingHurtEvent event) {
++        if (!(event.getEntity() instanceof Player player) || player != Minecraft.getInstance().player) {
++            return;
++        }
++        VisualEventContext context = new VisualEventContext(VisualEventType.DAMAGE, SCENES.current(), Minecraft.getInstance(), player, player.level(), event.getAmount(), 0f);
++        dispatchEvent(context);
 +    }
 +
 +    private static float resolveIntensity(VisualLayerType type) {
@@ -230,35 +393,484 @@ index 0000000000000000000000000000000000000000..aacfcd02b1beab57fb2e26b7a156dc6b
 +        float targetIntensity = target.intensity(type);
 +        return currentIntensity + (targetIntensity - currentIntensity) * blend;
 +    }
++
++    private static void renderSceneLayer(VisualScene scene, VisualLayerType layer, VisualRenderContext baseContext, float weight) {
++        if (scene == null || weight <= 0f || !scene.enabled(layer)) {
++            return;
++        }
++        float intensity = scene.intensity(layer) * weight;
++        if (intensity <= 0f) {
++            return;
++        }
++        VisualRenderContext context = baseContext.withIntensity(intensity);
++        for (VisualEffect effect : scene.effects()) {
++            if (effect.layer() == layer) {
++                effect.render(context);
++            }
++        }
++    }
++
++    private static void dispatchEvent(VisualEventContext context) {
++        SCENES.current().dispatchEvent(context);
++        if (SCENES.target() != null) {
++            SCENES.target().dispatchEvent(context);
++        }
++    }
++
++    private static void handlePlayerSignals() {
++        Minecraft minecraft = Minecraft.getInstance();
++        Player player = minecraft.player;
++        if (player == null) {
++            return;
++        }
++        float healthRatio = player.getHealth() / player.getMaxHealth();
++        if (lastHealth >= 0f && lastHealth > 0.25f && healthRatio <= 0.25f) {
++            dispatchEvent(new VisualEventContext(VisualEventType.LOW_HEALTH, SCENES.current(), minecraft, player, player.level(), healthRatio, lastHealth));
++        }
++        lastHealth = healthRatio;
++
++        float speed = (float) player.getDeltaMovement().length();
++        if (lastSpeed >= 0f && Math.abs(speed - lastSpeed) > 0.05f) {
++            dispatchEvent(new VisualEventContext(VisualEventType.SPEED_CHANGE, SCENES.current(), minecraft, player, player.level(), speed, lastSpeed));
++        }
++        lastSpeed = speed;
++
++        Level level = player.level();
++        if (level != null) {
++            ResourceKey<Level> dimension = level.dimension();
++            if (lastDimension != null && !lastDimension.equals(dimension)) {
++                dispatchEvent(new VisualEventContext(VisualEventType.DIMENSION_CHANGE, SCENES.current(), minecraft, player, level, 0f, 0f));
++            }
++            lastDimension = dimension;
++        }
++    }
 +}
 diff --git a/src/main/java/nx3n/flameapi/visual/VisualApiShowcase.java b/src/main/java/nx3n/flameapi/visual/VisualApiShowcase.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..444ed0ebf61da4187ed46b7ce2c6bdadbd86a455
+index 0000000000000000000000000000000000000000..97098f95f215fa134452c9b3053208a24454ee23
 --- /dev/null
 +++ b/src/main/java/nx3n/flameapi/visual/VisualApiShowcase.java
-@@ -0,0 +1,24 @@
+@@ -0,0 +1,21 @@
 +package nx3n.flameapi.visual;
-+
-+import nx3n.flameapi.visual.effects.AuroraPulseEffect;
 +
 +public final class VisualApiShowcase {
 +    private VisualApiShowcase() {
 +    }
 +
 +    public static void registerDefaults() {
-+        VisualApi.registerHudLayer(context -> {
-+            String label = "Flame Visuals: " + VisualApi.scenes().current().id();
-+            int x = 8;
-+            int y = 8;
-+            context.guiGraphics().drawString(context.minecraft().font, label, x, y, 0xFFE2E8FF, false);
-+        });
-+
-+        VisualApi.registerScreenEffect(new AuroraPulseEffect());
-+
 +        VisualScene cinematic = new VisualScene("cinematic")
-+            .setIntensity(VisualLayerType.HUD, 0.75f)
-+            .setIntensity(VisualLayerType.SCREEN, 0.65f);
-+        VisualApi.scenes().blendTo(cinematic, 3f);
++            .setIntensity(VisualLayerType.HUD, 0.8f)
++            .setIntensity(VisualLayerType.SCREEN, 0.7f)
++            .addEffect(Effects.label().text("Flame Visuals: cinematic"))
++            .addEffect(Effects.vignette().strength(0.45f))
++            .addEffect(Effects.colorShift().palette("cold"))
++            .addEffect(Effects.scanlines().animate("alpha", VisualEasing.OUT_QUAD, 0.05f, 0.25f, 0.6f));
++
++        cinematic.onEnter(() -> cinematic.props().set("intro", 1f));
++        cinematic.onEvent(VisualEventType.LOW_HEALTH, event -> cinematic.addEffect(Effects.blur().radius(16f).alpha(0.5f).lifetime(0.8f)));
++
++        VisualApi.activateScene(cinematic, 2.5f);
++    }
++}
+diff --git a/src/main/java/nx3n/flameapi/visual/VisualColor.java b/src/main/java/nx3n/flameapi/visual/VisualColor.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..a82645254769732adb2978dcb90a3c42730b9ad4
+--- /dev/null
++++ b/src/main/java/nx3n/flameapi/visual/VisualColor.java
+@@ -0,0 +1,27 @@
++package nx3n.flameapi.visual;
++
++public final class VisualColor {
++    private VisualColor() {
++    }
++
++    public static int withAlpha(int color, float alpha) {
++        int clamped = (int) (Math.max(0f, Math.min(1f, alpha)) * 255f);
++        return (clamped << 24) | (color & 0xFFFFFF);
++    }
++
++    public static int parseHex(String value, int fallback) {
++        if (value == null) {
++            return fallback;
++        }
++        String normalized = value.startsWith("#") ? value.substring(1) : value;
++        try {
++            long parsed = Long.parseLong(normalized, 16);
++            if (normalized.length() <= 6) {
++                return 0xFF000000 | (int) parsed;
++            }
++            return (int) parsed;
++        } catch (NumberFormatException ex) {
++            return fallback;
++        }
++    }
++}
+diff --git a/src/main/java/nx3n/flameapi/visual/VisualDraw.java b/src/main/java/nx3n/flameapi/visual/VisualDraw.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..365d737b49fa0e576785eae076ba349a9ffe56d8
+--- /dev/null
++++ b/src/main/java/nx3n/flameapi/visual/VisualDraw.java
+@@ -0,0 +1,92 @@
++package nx3n.flameapi.visual;
++
++import com.mojang.blaze3d.vertex.PoseStack;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.GuiGraphics;
++import net.minecraft.resources.ResourceLocation;
++import net.minecraft.util.RandomSource;
++
++public final class VisualDraw {
++    private VisualDraw() {
++    }
++
++    public static void drawRect(GuiGraphics guiGraphics, int x, int y, int width, int height, int color) {
++        if (guiGraphics == null) {
++            return;
++        }
++        guiGraphics.fill(x, y, x + width, y + height, color);
++    }
++
++    public static void drawGradient(GuiGraphics guiGraphics, int x, int y, int width, int height, int topColor, int bottomColor) {
++        if (guiGraphics == null) {
++            return;
++        }
++        guiGraphics.fillGradient(x, y, x + width, y + height, topColor, bottomColor);
++    }
++
++    public static void drawCircle(GuiGraphics guiGraphics, int centerX, int centerY, int radius, int color) {
++        if (guiGraphics == null || radius <= 0) {
++            return;
++        }
++        int rSquared = radius * radius;
++        for (int y = -radius; y <= radius; y++) {
++            int ySq = y * y;
++            int xSpan = (int) Math.floor(Math.sqrt(rSquared - ySq));
++            guiGraphics.fill(centerX - xSpan, centerY + y, centerX + xSpan, centerY + y + 1, color);
++        }
++    }
++
++    public static void drawBlur(GuiGraphics guiGraphics, int x, int y, int width, int height, int color, int passes) {
++        if (guiGraphics == null) {
++            return;
++        }
++        int clamped = Math.max(1, Math.min(6, passes));
++        for (int i = 0; i < clamped; i++) {
++            int inset = i;
++            int alpha = (color >> 24) & 0xFF;
++            int softened = (Math.max(8, alpha - (i * 18)) << 24) | (color & 0xFFFFFF);
++            guiGraphics.fill(x - inset, y - inset, x + width + inset, y + height + inset, softened);
++        }
++    }
++
++    public static void drawNoise(GuiGraphics guiGraphics, int x, int y, int width, int height, int color, float density) {
++        if (guiGraphics == null) {
++            return;
++        }
++        RandomSource random = Minecraft.getInstance().level == null
++            ? RandomSource.create()
++            : Minecraft.getInstance().level.getRandom();
++        int count = Math.max(1, (int) (width * height * Math.min(1f, Math.max(0f, density)) * 0.0025f));
++        for (int i = 0; i < count; i++) {
++            int px = x + random.nextInt(width);
++            int py = y + random.nextInt(height);
++            guiGraphics.fill(px, py, px + 1, py + 1, color);
++        }
++    }
++
++    public static void drawText(GuiGraphics guiGraphics, String text, int x, int y, int color, boolean shadow) {
++        if (guiGraphics == null) {
++            return;
++        }
++        guiGraphics.drawString(Minecraft.getInstance().font, text, x, y, color, shadow);
++    }
++
++    public static void drawImage(GuiGraphics guiGraphics, ResourceLocation texture, int x, int y, int width, int height, int u, int v, int textureWidth, int textureHeight) {
++        if (guiGraphics == null || texture == null) {
++            return;
++        }
++        guiGraphics.blit(texture, x, y, u, v, width, height, textureWidth, textureHeight);
++    }
++
++    public static void withPose(PoseStack poseStack, Runnable action) {
++        if (poseStack == null || action == null) {
++            return;
++        }
++        poseStack.pushPose();
++        try {
++            action.run();
++        } finally {
++            poseStack.popPose();
++        }
++    }
++}
+diff --git a/src/main/java/nx3n/flameapi/visual/VisualEasing.java b/src/main/java/nx3n/flameapi/visual/VisualEasing.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..04c2bb304e6ce8b26fd05cf2233f36630b925775
+--- /dev/null
++++ b/src/main/java/nx3n/flameapi/visual/VisualEasing.java
+@@ -0,0 +1,33 @@
++package nx3n.flameapi.visual;
++
++public enum VisualEasing {
++    LINEAR {
++        @Override
++        public float apply(float t) {
++            return t;
++        }
++    },
++    IN_QUAD {
++        @Override
++        public float apply(float t) {
++            return t * t;
++        }
++    },
++    OUT_QUAD {
++        @Override
++        public float apply(float t) {
++            return t * (2f - t);
++        }
++    },
++    IN_OUT_QUAD {
++        @Override
++        public float apply(float t) {
++            if (t < 0.5f) {
++                return 2f * t * t;
++            }
++            return -1f + (4f - 2f * t) * t;
++        }
++    };
++
++    public abstract float apply(float t);
++}
+diff --git a/src/main/java/nx3n/flameapi/visual/VisualEffect.java b/src/main/java/nx3n/flameapi/visual/VisualEffect.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..c01b1e07a81de57af002670f851aef0750c77295
+--- /dev/null
++++ b/src/main/java/nx3n/flameapi/visual/VisualEffect.java
+@@ -0,0 +1,91 @@
++package nx3n.flameapi.visual;
++
++import java.util.ArrayList;
++import java.util.Iterator;
++import java.util.List;
++
++public abstract class VisualEffect {
++    private final VisualLayerType layer;
++    private final VisualProps props = new VisualProps();
++    private final List<VisualAnimation> animations = new ArrayList<>();
++    private final VisualTimeline timeline = new VisualTimeline();
++    private float lifetime = -1f;
++    private float age;
++    private boolean loop;
++    private float timelineTime;
++
++    protected VisualEffect(VisualLayerType layer) {
++        this.layer = layer;
++    }
++
++    public VisualLayerType layer() {
++        return layer;
++    }
++
++    public VisualProps props() {
++        return props;
++    }
++
++    public VisualTimeline timeline() {
++        return timeline;
++    }
++
++    public VisualEffect set(String key, float value) {
++        props.set(key, value);
++        return this;
++    }
++
++    public VisualEffect set(String key, String value) {
++        props.set(key, value);
++        return this;
++    }
++
++    public VisualEffect animate(String property, VisualEasing easing, float from, float to, float duration) {
++        return animate(property, easing, from, to, duration, 0f, false);
++    }
++
++    public VisualEffect animate(String property, VisualEasing easing, float from, float to, float duration, float delay, boolean loop) {
++        animations.add(new VisualAnimation(property, easing, from, to, duration, delay, loop));
++        return this;
++    }
++
++    public VisualEffect lifetime(float seconds) {
++        this.lifetime = seconds;
++        return this;
++    }
++
++    public VisualEffect loop(boolean loop) {
++        this.loop = loop;
++        return this;
++    }
++
++    public void reset() {
++        age = 0f;
++        timelineTime = 0f;
++        for (VisualAnimation animation : animations) {
++            animation.reset();
++        }
++    }
++
++    public void tick(float deltaSeconds) {
++        age += deltaSeconds;
++        timelineTime += deltaSeconds;
++        timeline.apply(props, timelineTime);
++        Iterator<VisualAnimation> iterator = animations.iterator();
++        while (iterator.hasNext()) {
++            VisualAnimation animation = iterator.next();
++            if (animation.tick(deltaSeconds, props)) {
++                iterator.remove();
++            }
++        }
++        if (loop && lifetime > 0f && age >= lifetime) {
++            reset();
++        }
++    }
++
++    public boolean expired() {
++        return lifetime > 0f && age >= lifetime && !loop;
++    }
++
++    public abstract void render(VisualRenderContext context);
++}
+diff --git a/src/main/java/nx3n/flameapi/visual/VisualEffectConfig.java b/src/main/java/nx3n/flameapi/visual/VisualEffectConfig.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..cbef587b388b12ffaae999d8edccab227941f584
+--- /dev/null
++++ b/src/main/java/nx3n/flameapi/visual/VisualEffectConfig.java
+@@ -0,0 +1,75 @@
++package nx3n.flameapi.visual;
++
++import java.util.ArrayList;
++import java.util.List;
++
++public final class VisualEffectConfig {
++    private final String type;
++    private final VisualProps props = new VisualProps();
++    private final List<VisualAnimation> animations = new ArrayList<>();
++    private final VisualTimeline timeline = new VisualTimeline();
++    private VisualLayerType layer = VisualLayerType.SCREEN;
++    private float lifetime = -1f;
++    private boolean loop;
++
++    public VisualEffectConfig(String type) {
++        this.type = type;
++    }
++
++    public String type() {
++        return type;
++    }
++
++    public VisualProps props() {
++        return props;
++    }
++
++    public List<VisualAnimation> animations() {
++        return animations;
++    }
++
++    public VisualTimeline timeline() {
++        return timeline;
++    }
++
++    public VisualLayerType layer() {
++        return layer;
++    }
++
++    public void layer(VisualLayerType layer) {
++        this.layer = layer;
++    }
++
++    public float lifetime() {
++        return lifetime;
++    }
++
++    public void lifetime(float lifetime) {
++        this.lifetime = lifetime;
++    }
++
++    public boolean loop() {
++        return loop;
++    }
++
++    public void loop(boolean loop) {
++        this.loop = loop;
++    }
++
++    public void applyTo(VisualEffect effect) {
++        for (String key : props.floats().keySet()) {
++            effect.set(key, props.getFloat(key, 0f));
++        }
++        for (String key : props.strings().keySet()) {
++            effect.set(key, props.getString(key, ""));
++        }
++        for (VisualAnimation animation : animations) {
++            effect.animate(animation.property(), animation.easing(), animation.from(), animation.to(), animation.duration(), animation.delay(), animation.loop());
++        }
++        for (VisualKeyframe keyframe : timeline.keyframes()) {
++            effect.timeline().at(keyframe.time()).set(keyframe.property(), keyframe.value(), keyframe.easing());
++        }
++        effect.timeline().loop(loop);
++        effect.lifetime(lifetime).loop(loop);
++    }
++}
+diff --git a/src/main/java/nx3n/flameapi/visual/VisualEffectRegistry.java b/src/main/java/nx3n/flameapi/visual/VisualEffectRegistry.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..7727ead393c5a14fa918b8f9931d43d61f314496
+--- /dev/null
++++ b/src/main/java/nx3n/flameapi/visual/VisualEffectRegistry.java
+@@ -0,0 +1,47 @@
++package nx3n.flameapi.visual;
++
++import nx3n.flameapi.visual.effects.BlurEffect;
++import nx3n.flameapi.visual.effects.ColorShiftEffect;
++import nx3n.flameapi.visual.effects.NoiseEffect;
++import nx3n.flameapi.visual.effects.ScanlineEffect;
++import nx3n.flameapi.visual.effects.VignetteEffect;
++import nx3n.flameapi.visual.effects.AuroraPulseEffect;
++
++import java.util.HashMap;
++import java.util.Map;
++import java.util.function.Function;
++
++public final class VisualEffectRegistry {
++    private static final Map<String, Function<VisualEffectConfig, VisualEffect>> REGISTRY = new HashMap<>();
++    private static boolean bootstrapped;
++
++    private VisualEffectRegistry() {
++    }
++
++    public static void bootstrap() {
++        if (bootstrapped) {
++            return;
++        }
++        bootstrapped = true;
++        register("blur", config -> new BlurEffect(config.layer()));
++        register("vignette", config -> new VignetteEffect(config.layer()));
++        register("color_shift", config -> new ColorShiftEffect(config.layer()));
++        register("noise", config -> new NoiseEffect(config.layer()));
++        register("scanlines", config -> new ScanlineEffect(config.layer()));
++        register("aurora_pulse", config -> new AuroraPulseEffect());
++    }
++
++    public static void register(String type, Function<VisualEffectConfig, VisualEffect> factory) {
++        REGISTRY.put(type, factory);
++    }
++
++    public static VisualEffect create(String type, VisualEffectConfig config) {
++        Function<VisualEffectConfig, VisualEffect> factory = REGISTRY.get(type);
++        if (factory == null) {
++            return null;
++        }
++        VisualEffect effect = factory.apply(config);
++        config.applyTo(effect);
++        return effect;
 +    }
 +}
 diff --git a/src/main/java/nx3n/flameapi/visual/VisualEntityContext.java b/src/main/java/nx3n/flameapi/visual/VisualEntityContext.java
@@ -319,6 +931,85 @@ index 0000000000000000000000000000000000000000..1fadbb9a8c83a71890edd3240288db10
 +@FunctionalInterface
 +public interface VisualEntityEffect {
 +    void render(VisualEntityContext context);
++}
+diff --git a/src/main/java/nx3n/flameapi/visual/VisualEventContext.java b/src/main/java/nx3n/flameapi/visual/VisualEventContext.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..e059bebf2a8e830bee6c44265d8d06d341483f85
+--- /dev/null
++++ b/src/main/java/nx3n/flameapi/visual/VisualEventContext.java
+@@ -0,0 +1,57 @@
++package nx3n.flameapi.visual;
++
++import net.minecraft.client.Minecraft;
++import net.minecraft.world.entity.player.Player;
++import net.minecraft.world.level.Level;
++
++public final class VisualEventContext {
++    private final VisualEventType type;
++    private final VisualScene scene;
++    private final Minecraft minecraft;
++    private final Player player;
++    private final Level level;
++    private final float value;
++    private final float previousValue;
++
++    public VisualEventContext(VisualEventType type, VisualScene scene) {
++        this(type, scene, Minecraft.getInstance(), Minecraft.getInstance().player, Minecraft.getInstance().level, 0f, 0f);
++    }
++
++    public VisualEventContext(VisualEventType type, VisualScene scene, Minecraft minecraft, Player player, Level level, float value, float previousValue) {
++        this.type = type;
++        this.scene = scene;
++        this.minecraft = minecraft;
++        this.player = player;
++        this.level = level;
++        this.value = value;
++        this.previousValue = previousValue;
++    }
++
++    public VisualEventType type() {
++        return type;
++    }
++
++    public VisualScene scene() {
++        return scene;
++    }
++
++    public Minecraft minecraft() {
++        return minecraft;
++    }
++
++    public Player player() {
++        return player;
++    }
++
++    public Level level() {
++        return level;
++    }
++
++    public float value() {
++        return value;
++    }
++
++    public float previousValue() {
++        return previousValue;
++    }
++}
+diff --git a/src/main/java/nx3n/flameapi/visual/VisualEventType.java b/src/main/java/nx3n/flameapi/visual/VisualEventType.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..ac1563ff64855a8ad2f80e27f362480fe764fe20
+--- /dev/null
++++ b/src/main/java/nx3n/flameapi/visual/VisualEventType.java
+@@ -0,0 +1,10 @@
++package nx3n.flameapi.visual;
++
++public enum VisualEventType {
++    ENTER_SCENE,
++    EXIT_SCENE,
++    DAMAGE,
++    LOW_HEALTH,
++    DIMENSION_CHANGE,
++    SPEED_CHANGE
 +}
 diff --git a/src/main/java/nx3n/flameapi/visual/VisualHudContext.java b/src/main/java/nx3n/flameapi/visual/VisualHudContext.java
 new file mode 100644
@@ -384,6 +1075,43 @@ index 0000000000000000000000000000000000000000..7df5bdf0e77e945a53032df522196c2e
 +public interface VisualHudLayer {
 +    void render(VisualHudContext context);
 +}
+diff --git a/src/main/java/nx3n/flameapi/visual/VisualKeyframe.java b/src/main/java/nx3n/flameapi/visual/VisualKeyframe.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..f4550e1db8bb8b5f2c8eef9fbea5f3e3699d7c1b
+--- /dev/null
++++ b/src/main/java/nx3n/flameapi/visual/VisualKeyframe.java
+@@ -0,0 +1,31 @@
++package nx3n.flameapi.visual;
++
++public final class VisualKeyframe {
++    private final float time;
++    private final String property;
++    private final float value;
++    private final VisualEasing easing;
++
++    public VisualKeyframe(float time, String property, float value, VisualEasing easing) {
++        this.time = time;
++        this.property = property;
++        this.value = value;
++        this.easing = easing == null ? VisualEasing.LINEAR : easing;
++    }
++
++    public float time() {
++        return time;
++    }
++
++    public String property() {
++        return property;
++    }
++
++    public float value() {
++        return value;
++    }
++
++    public VisualEasing easing() {
++        return easing;
++    }
++}
 diff --git a/src/main/java/nx3n/flameapi/visual/VisualLayerType.java b/src/main/java/nx3n/flameapi/visual/VisualLayerType.java
 new file mode 100644
 index 0000000000000000000000000000000000000000..e985083ae70f5d5740cf0cbf7401452070947fe3
@@ -442,20 +1170,213 @@ index 0000000000000000000000000000000000000000..b867b02425e09af945babee4d90435f2
 +        return blend(palette[index], palette[nextIndex], local);
 +    }
 +}
-diff --git a/src/main/java/nx3n/flameapi/visual/VisualScene.java b/src/main/java/nx3n/flameapi/visual/VisualScene.java
+diff --git a/src/main/java/nx3n/flameapi/visual/VisualPalettes.java b/src/main/java/nx3n/flameapi/visual/VisualPalettes.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..892424971b1b8b71917f5a704ac0057cfc846980
+index 0000000000000000000000000000000000000000..c1cfc0e0ac4689cd82f0eef0d39c6f9d058dbe86
 --- /dev/null
-+++ b/src/main/java/nx3n/flameapi/visual/VisualScene.java
-@@ -0,0 +1,43 @@
++++ b/src/main/java/nx3n/flameapi/visual/VisualPalettes.java
+@@ -0,0 +1,25 @@
 +package nx3n.flameapi.visual;
 +
-+import java.util.EnumMap;
++import java.util.HashMap;
 +import java.util.Map;
++
++public final class VisualPalettes {
++    private static final Map<String, int[]> PALETTES = new HashMap<>();
++
++    static {
++        register("default", new int[]{0xFF4B9BFF, 0xFF6DE8FF, 0xFFB9F3FF});
++        register("cold", new int[]{0xFF0F172A, 0xFF1E40AF, 0xFF38BDF8});
++        register("warm", new int[]{0xFF581C87, 0xFFEA580C, 0xFFFACC15});
++    }
++
++    private VisualPalettes() {
++    }
++
++    public static void register(String name, int[] colors) {
++        PALETTES.put(name, colors);
++    }
++
++    public static int[] palette(String name) {
++        return PALETTES.getOrDefault(name, PALETTES.get("default"));
++    }
++}
+diff --git a/src/main/java/nx3n/flameapi/visual/VisualProps.java b/src/main/java/nx3n/flameapi/visual/VisualProps.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..41208fe6b8a51d39b3e11e56b33f29b96f8eeebf
+--- /dev/null
++++ b/src/main/java/nx3n/flameapi/visual/VisualProps.java
+@@ -0,0 +1,39 @@
++package nx3n.flameapi.visual;
++
++import java.util.HashMap;
++import java.util.Map;
++
++public final class VisualProps {
++    private final Map<String, Float> floats = new HashMap<>();
++    private final Map<String, String> strings = new HashMap<>();
++
++    public VisualProps set(String key, float value) {
++        floats.put(key, value);
++        return this;
++    }
++
++    public VisualProps set(String key, String value) {
++        strings.put(key, value);
++        return this;
++    }
++
++    public float getFloat(String key, float fallback) {
++        return floats.getOrDefault(key, fallback);
++    }
++
++    public String getString(String key, String fallback) {
++        return strings.getOrDefault(key, fallback);
++    }
++
++    public boolean hasFloat(String key) {
++        return floats.containsKey(key);
++    }
++
++    public Map<String, Float> floats() {
++        return floats;
++    }
++
++    public Map<String, String> strings() {
++        return strings;
++    }
++}
+diff --git a/src/main/java/nx3n/flameapi/visual/VisualRenderContext.java b/src/main/java/nx3n/flameapi/visual/VisualRenderContext.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..ed88be0a705fa299e62ce0ace3046e82878f90a7
+--- /dev/null
++++ b/src/main/java/nx3n/flameapi/visual/VisualRenderContext.java
+@@ -0,0 +1,102 @@
++package nx3n.flameapi.visual;
++
++import com.mojang.blaze3d.vertex.PoseStack;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.GuiGraphics;
++import net.minecraft.world.entity.LivingEntity;
++import net.minecraftforge.client.event.RenderLevelStageEvent;
++import net.minecraftforge.client.event.RenderLivingEvent;
++
++public final class VisualRenderContext {
++    private final VisualLayerType layer;
++    private final Minecraft minecraft;
++    private final GuiGraphics guiGraphics;
++    private final PoseStack poseStack;
++    private final LivingEntity entity;
++    private final RenderLivingEvent<?, ?> entityEvent;
++    private final RenderLevelStageEvent.Stage stage;
++    private final int screenWidth;
++    private final int screenHeight;
++    private final float partialTick;
++    private final float intensity;
++
++    VisualRenderContext(VisualLayerType layer, Minecraft minecraft, GuiGraphics guiGraphics, PoseStack poseStack, LivingEntity entity,
++                        RenderLivingEvent<?, ?> entityEvent, RenderLevelStageEvent.Stage stage, int screenWidth, int screenHeight,
++                        float partialTick, float intensity) {
++        this.layer = layer;
++        this.minecraft = minecraft;
++        this.guiGraphics = guiGraphics;
++        this.poseStack = poseStack;
++        this.entity = entity;
++        this.entityEvent = entityEvent;
++        this.stage = stage;
++        this.screenWidth = screenWidth;
++        this.screenHeight = screenHeight;
++        this.partialTick = partialTick;
++        this.intensity = intensity;
++    }
++
++    public VisualRenderContext withIntensity(float intensity) {
++        return new VisualRenderContext(layer, minecraft, guiGraphics, poseStack, entity, entityEvent, stage, screenWidth, screenHeight, partialTick, intensity);
++    }
++
++    public static VisualRenderContext hud(Minecraft minecraft, GuiGraphics guiGraphics, float partialTick, int screenWidth, int screenHeight, float intensity) {
++        return new VisualRenderContext(VisualLayerType.HUD, minecraft, guiGraphics, null, null, null, null, screenWidth, screenHeight, partialTick, intensity);
++    }
++
++    public static VisualRenderContext screen(Minecraft minecraft, GuiGraphics guiGraphics, float partialTick, int screenWidth, int screenHeight, float intensity) {
++        return new VisualRenderContext(VisualLayerType.SCREEN, minecraft, guiGraphics, null, null, null, null, screenWidth, screenHeight, partialTick, intensity);
++    }
++
++    public static VisualRenderContext world(Minecraft minecraft, PoseStack poseStack, RenderLevelStageEvent.Stage stage, float partialTick, float intensity) {
++        return new VisualRenderContext(VisualLayerType.WORLD, minecraft, null, poseStack, null, null, stage, 0, 0, partialTick, intensity);
++    }
++
++    public static VisualRenderContext entity(Minecraft minecraft, LivingEntity entity, RenderLivingEvent<?, ?> event, float partialTick, float intensity) {
++        return new VisualRenderContext(VisualLayerType.ENTITY, minecraft, null, null, entity, event, null, 0, 0, partialTick, intensity);
++    }
++
++    public VisualLayerType layer() {
++        return layer;
++    }
++
++    public Minecraft minecraft() {
++        return minecraft;
++    }
++
++    public GuiGraphics guiGraphics() {
++        return guiGraphics;
++    }
++
++    public PoseStack poseStack() {
++        return poseStack;
++    }
++
++    public LivingEntity entity() {
++        return entity;
++    }
++
++    public RenderLivingEvent<?, ?> entityEvent() {
++        return entityEvent;
++    }
++
++    public RenderLevelStageEvent.Stage stage() {
++        return stage;
++    }
++
++    public int screenWidth() {
++        return screenWidth;
++    }
++
++    public int screenHeight() {
++        return screenHeight;
++    }
++
++    public float partialTick() {
++        return partialTick;
++    }
++
++    public float intensity() {
++        return intensity;
++    }
++}
+diff --git a/src/main/java/nx3n/flameapi/visual/VisualScene.java b/src/main/java/nx3n/flameapi/visual/VisualScene.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..48b07bac758fcddd028fe78ae2719935a47247e9
+--- /dev/null
++++ b/src/main/java/nx3n/flameapi/visual/VisualScene.java
+@@ -0,0 +1,120 @@
++package nx3n.flameapi.visual;
++
++import java.util.ArrayList;
++import java.util.EnumMap;
++import java.util.List;
++import java.util.Map;
++import java.util.function.Consumer;
 +
 +public final class VisualScene {
 +    private final String id;
 +    private final Map<VisualLayerType, Float> intensities = new EnumMap<>(VisualLayerType.class);
++    private final List<VisualEffect> effects = new ArrayList<>();
++    private final VisualProps props = new VisualProps();
++    private final VisualTimeline timeline = new VisualTimeline();
++    private final Map<VisualEventType, List<Consumer<VisualEventContext>>> eventHandlers = new EnumMap<>(VisualEventType.class);
++    private Runnable onEnter;
++    private Runnable onExit;
 +
 +    public VisualScene(String id) {
 +        this.id = id;
@@ -466,6 +1387,14 @@ index 0000000000000000000000000000000000000000..892424971b1b8b71917f5a704ac0057c
 +
 +    public String id() {
 +        return id;
++    }
++
++    public VisualProps props() {
++        return props;
++    }
++
++    public VisualTimeline timeline() {
++        return timeline;
 +    }
 +
 +    public VisualScene setIntensity(VisualLayerType type, float intensity) {
@@ -481,6 +1410,66 @@ index 0000000000000000000000000000000000000000..892424971b1b8b71917f5a704ac0057c
 +        return intensity(type) > 0.001f;
 +    }
 +
++    public VisualScene addEffect(VisualEffect effect) {
++        if (effect != null) {
++            effects.add(effect);
++        }
++        return this;
++    }
++
++    public List<VisualEffect> effects() {
++        return effects;
++    }
++
++    public VisualScene onEnter(Runnable action) {
++        this.onEnter = action;
++        return this;
++    }
++
++    public VisualScene onExit(Runnable action) {
++        this.onExit = action;
++        return this;
++    }
++
++    public VisualScene onEvent(VisualEventType type, Consumer<VisualEventContext> handler) {
++        eventHandlers.computeIfAbsent(type, key -> new ArrayList<>()).add(handler);
++        return this;
++    }
++
++    void enter() {
++        if (onEnter != null) {
++            onEnter.run();
++        }
++        dispatchEvent(new VisualEventContext(VisualEventType.ENTER_SCENE, this));
++    }
++
++    void exit() {
++        if (onExit != null) {
++            onExit.run();
++        }
++        dispatchEvent(new VisualEventContext(VisualEventType.EXIT_SCENE, this));
++    }
++
++    void dispatchEvent(VisualEventContext context) {
++        List<Consumer<VisualEventContext>> handlers = eventHandlers.get(context.type());
++        if (handlers == null) {
++            return;
++        }
++        for (Consumer<VisualEventContext> handler : handlers) {
++            handler.accept(context);
++        }
++    }
++
++    void tick(float deltaSeconds) {
++        float time = props.getFloat("time", 0f) + deltaSeconds;
++        props.set("time", time);
++        timeline.apply(props, time);
++        effects.removeIf(effect -> {
++            effect.tick(deltaSeconds);
++            return effect.expired();
++        });
++    }
++
 +    private float clamp(float value) {
 +        if (value < 0f) {
 +            return 0f;
@@ -491,12 +1480,219 @@ index 0000000000000000000000000000000000000000..892424971b1b8b71917f5a704ac0057c
 +        return value;
 +    }
 +}
+diff --git a/src/main/java/nx3n/flameapi/visual/VisualSceneSerializer.java b/src/main/java/nx3n/flameapi/visual/VisualSceneSerializer.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..68ae039d296a87a47ad952a375b741952ca1f649
+--- /dev/null
++++ b/src/main/java/nx3n/flameapi/visual/VisualSceneSerializer.java
+@@ -0,0 +1,201 @@
++package nx3n.flameapi.visual;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonElement;
++import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
++import net.minecraft.client.Minecraft;
++import net.minecraft.resources.ResourceLocation;
++
++import java.io.BufferedReader;
++import java.io.IOException;
++import java.io.InputStreamReader;
++import java.nio.charset.StandardCharsets;
++
++public final class VisualSceneSerializer {
++    private VisualSceneSerializer() {
++    }
++
++    public static VisualScene fromJson(String json) {
++        VisualEffectRegistry.bootstrap();
++        JsonObject root = JsonParser.parseString(json).getAsJsonObject();
++        String id = getString(root, "scene", getString(root, "id", "scene"));
++        VisualScene scene = new VisualScene(id);
++        applySceneProps(scene, root);
++        JsonArray effects = root.has("effects") ? root.getAsJsonArray("effects") : new JsonArray();
++        for (JsonElement element : effects) {
++            if (!element.isJsonObject()) {
++                continue;
++            }
++            VisualEffect effect = parseEffect(element.getAsJsonObject());
++            if (effect != null) {
++                scene.addEffect(effect);
++            }
++        }
++        return scene;
++    }
++
++    public static VisualScene fromResource(ResourceLocation resourceLocation) throws IOException {
++        Minecraft minecraft = Minecraft.getInstance();
++        if (minecraft == null || minecraft.getResourceManager() == null) {
++            throw new IOException("Resource manager not available");
++        }
++        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
++            minecraft.getResourceManager().getResource(resourceLocation).orElseThrow().open(),
++            StandardCharsets.UTF_8))) {
++            StringBuilder builder = new StringBuilder();
++            String line;
++            while ((line = reader.readLine()) != null) {
++                builder.append(line).append('\n');
++            }
++            return fromJson(builder.toString());
++        }
++    }
++
++    private static void applySceneProps(VisualScene scene, JsonObject root) {
++        if (root.has("intensities") && root.get("intensities").isJsonObject()) {
++            JsonObject intensities = root.getAsJsonObject("intensities");
++            for (VisualLayerType layer : VisualLayerType.values()) {
++                String key = layer.name().toLowerCase();
++                if (intensities.has(key)) {
++                    scene.setIntensity(layer, intensities.get(key).getAsFloat());
++                }
++            }
++        }
++        if (root.has("props") && root.get("props").isJsonObject()) {
++            JsonObject props = root.getAsJsonObject("props");
++            for (String key : props.keySet()) {
++                JsonElement value = props.get(key);
++                if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isNumber()) {
++                    scene.props().set(key, value.getAsFloat());
++                } else if (value.isJsonPrimitive()) {
++                    scene.props().set(key, value.getAsString());
++                }
++            }
++        }
++        if (root.has("timeline") && root.get("timeline").isJsonArray()) {
++            parseTimeline(scene.timeline(), root.getAsJsonArray("timeline"));
++        }
++    }
++
++    private static VisualEffect parseEffect(JsonObject object) {
++        String type = getString(object, "type", "");
++        if (type.isEmpty()) {
++            return null;
++        }
++        VisualEffectConfig config = new VisualEffectConfig(type);
++        if (object.has("layer")) {
++            config.layer(parseLayer(object.get("layer").getAsString()));
++        }
++        if (object.has("lifetime")) {
++            config.lifetime(object.get("lifetime").getAsFloat());
++        }
++        if (object.has("loop")) {
++            config.loop(object.get("loop").getAsBoolean());
++        }
++        if (object.has("props") && object.get("props").isJsonObject()) {
++            parseProps(config.props(), object.getAsJsonObject("props"));
++        }
++        for (String key : object.keySet()) {
++            if (isReservedKey(key)) {
++                continue;
++            }
++            JsonElement value = object.get(key);
++            if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isNumber()) {
++                config.props().set(key, value.getAsFloat());
++            } else if (value.isJsonPrimitive()) {
++                config.props().set(key, value.getAsString());
++            }
++        }
++        if (object.has("animations") && object.get("animations").isJsonArray()) {
++            parseAnimations(config, object.getAsJsonArray("animations"));
++        }
++        if (object.has("timeline") && object.get("timeline").isJsonArray()) {
++            parseTimeline(config.timeline(), object.getAsJsonArray("timeline"));
++        }
++        return VisualEffectRegistry.create(type, config);
++    }
++
++    private static void parseProps(VisualProps props, JsonObject json) {
++        for (String key : json.keySet()) {
++            JsonElement value = json.get(key);
++            if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isNumber()) {
++                props.set(key, value.getAsFloat());
++            } else if (value.isJsonPrimitive()) {
++                props.set(key, value.getAsString());
++            }
++        }
++    }
++
++    private static void parseAnimations(VisualEffectConfig config, JsonArray animations) {
++        for (JsonElement element : animations) {
++            if (!element.isJsonObject()) {
++                continue;
++            }
++            JsonObject anim = element.getAsJsonObject();
++            String property = getString(anim, "property", "");
++            if (property.isEmpty()) {
++                continue;
++            }
++            VisualEasing easing = parseEasing(getString(anim, "easing", "linear"));
++            float from = getFloat(anim, "from", 0f);
++            float to = getFloat(anim, "to", 0f);
++            float duration = getFloat(anim, "duration", 0.3f);
++            float delay = getFloat(anim, "delay", 0f);
++            boolean loop = getBoolean(anim, "loop", false);
++            config.animations().add(new VisualAnimation(property, easing, from, to, duration, delay, loop));
++        }
++    }
++
++    private static void parseTimeline(VisualTimeline timeline, JsonArray frames) {
++        for (JsonElement element : frames) {
++            if (!element.isJsonObject()) {
++                continue;
++            }
++            JsonObject frame = element.getAsJsonObject();
++            float time = getFloat(frame, "time", 0f);
++            String property = getString(frame, "property", "");
++            if (property.isEmpty()) {
++                continue;
++            }
++            float value = getFloat(frame, "value", 0f);
++            VisualEasing easing = parseEasing(getString(frame, "easing", "linear"));
++            timeline.at(time).set(property, value, easing);
++        }
++    }
++
++    private static VisualLayerType parseLayer(String value) {
++        for (VisualLayerType layer : VisualLayerType.values()) {
++            if (layer.name().equalsIgnoreCase(value)) {
++                return layer;
++            }
++        }
++        return VisualLayerType.SCREEN;
++    }
++
++    private static VisualEasing parseEasing(String value) {
++        for (VisualEasing easing : VisualEasing.values()) {
++            if (easing.name().equalsIgnoreCase(value)) {
++                return easing;
++            }
++        }
++        return VisualEasing.LINEAR;
++    }
++
++    private static boolean isReservedKey(String key) {
++        return key.equals("type") || key.equals("layer") || key.equals("props") || key.equals("animations")
++            || key.equals("timeline") || key.equals("lifetime") || key.equals("loop");
++    }
++
++    private static String getString(JsonObject object, String key, String fallback) {
++        return object.has(key) ? object.get(key).getAsString() : fallback;
++    }
++
++    private static float getFloat(JsonObject object, String key, float fallback) {
++        return object.has(key) ? object.get(key).getAsFloat() : fallback;
++    }
++
++    private static boolean getBoolean(JsonObject object, String key, boolean fallback) {
++        return object.has(key) ? object.get(key).getAsBoolean() : fallback;
++    }
++}
 diff --git a/src/main/java/nx3n/flameapi/visual/VisualSceneStack.java b/src/main/java/nx3n/flameapi/visual/VisualSceneStack.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..ec2339773e697e9170860430f946cea858f53365
+index 0000000000000000000000000000000000000000..5146d2ff04f301c86788b02b964bea87939e7c39
 --- /dev/null
 +++ b/src/main/java/nx3n/flameapi/visual/VisualSceneStack.java
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,77 @@
 +package nx3n.flameapi.visual;
 +
 +public final class VisualSceneStack {
@@ -525,10 +1721,14 @@ index 0000000000000000000000000000000000000000..ec2339773e697e9170860430f946cea8
 +        if (scene == null) {
 +            return;
 +        }
++        if (current != null) {
++            current.exit();
++        }
 +        current = scene;
 +        target = null;
 +        blendProgress = 0f;
 +        blendDuration = 0f;
++        current.enter();
 +    }
 +
 +    public void blendTo(VisualScene scene, float seconds) {
@@ -542,14 +1742,20 @@ index 0000000000000000000000000000000000000000..ec2339773e697e9170860430f946cea8
 +        target = scene;
 +        blendDuration = seconds;
 +        blendProgress = 0f;
++        target.enter();
 +    }
 +
 +    public void tick(float deltaSeconds) {
++        current.tick(deltaSeconds);
++        if (target != null) {
++            target.tick(deltaSeconds);
++        }
 +        if (target == null) {
 +            return;
 +        }
 +        blendProgress += deltaSeconds;
 +        if (blendProgress >= blendDuration) {
++            current.exit();
 +            current = target;
 +            target = null;
 +            blendProgress = 0f;
@@ -628,6 +1834,87 @@ index 0000000000000000000000000000000000000000..db6dff30d573fd07ed14abf3d8a3dc06
 +public interface VisualScreenEffect {
 +    void render(VisualScreenContext context);
 +}
+diff --git a/src/main/java/nx3n/flameapi/visual/VisualTimeline.java b/src/main/java/nx3n/flameapi/visual/VisualTimeline.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..53db0859f00047b2d68724fabf16c68e95061d12
+--- /dev/null
++++ b/src/main/java/nx3n/flameapi/visual/VisualTimeline.java
+@@ -0,0 +1,75 @@
++package nx3n.flameapi.visual;
++
++import java.util.ArrayList;
++import java.util.Comparator;
++import java.util.List;
++import java.util.stream.Collectors;
++
++public final class VisualTimeline {
++    private final List<VisualKeyframe> keyframes = new ArrayList<>();
++    private float time;
++    private boolean loop;
++
++    public VisualTimeline at(float time) {
++        this.time = time;
++        return this;
++    }
++
++    public VisualTimeline set(String property, float value) {
++        return set(property, value, VisualEasing.LINEAR);
++    }
++
++    public VisualTimeline set(String property, float value, VisualEasing easing) {
++        keyframes.add(new VisualKeyframe(time, property, value, easing));
++        keyframes.sort(Comparator.comparing(VisualKeyframe::time));
++        return this;
++    }
++
++    public VisualTimeline loop(boolean loop) {
++        this.loop = loop;
++        return this;
++    }
++
++    public float duration() {
++        return keyframes.stream().map(VisualKeyframe::time).max(Float::compare).orElse(0f);
++    }
++
++    public List<VisualKeyframe> keyframes() {
++        return new ArrayList<>(keyframes);
++    }
++
++    public void apply(VisualProps props, float timelineTime) {
++        if (keyframes.isEmpty()) {
++            return;
++        }
++        float maxTime = duration();
++        float effectiveTime = loop && maxTime > 0f ? (timelineTime % maxTime) : Math.min(timelineTime, maxTime);
++
++        List<String> properties = keyframes.stream().map(VisualKeyframe::property).distinct().collect(Collectors.toList());
++        for (String property : properties) {
++            VisualKeyframe previous = null;
++            VisualKeyframe next = null;
++            for (VisualKeyframe keyframe : keyframes) {
++                if (!keyframe.property().equals(property)) {
++                    continue;
++                }
++                if (keyframe.time() <= effectiveTime) {
++                    previous = keyframe;
++                } else {
++                    next = keyframe;
++                    break;
++                }
++            }
++            if (previous == null) {
++                continue;
++            }
++            if (next == null || next.time() == previous.time()) {
++                props.set(property, previous.value());
++                continue;
++            }
++            float segmentT = (effectiveTime - previous.time()) / (next.time() - previous.time());
++            float eased = next.easing().apply(segmentT);
++            props.set(property, previous.value() + (next.value() - previous.value()) * eased);
++        }
++    }
++}
 diff --git a/src/main/java/nx3n/flameapi/visual/VisualWorldContext.java b/src/main/java/nx3n/flameapi/visual/VisualWorldContext.java
 new file mode 100644
 index 0000000000000000000000000000000000000000..d5cc65502c987ab659eb065757695d267164f802
@@ -689,17 +1976,19 @@ index 0000000000000000000000000000000000000000..d150865e901567f87baa0623a0b3f262
 +}
 diff --git a/src/main/java/nx3n/flameapi/visual/effects/AuroraPulseEffect.java b/src/main/java/nx3n/flameapi/visual/effects/AuroraPulseEffect.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..f628722400d74fda58b24e4e1c7ae21859305a4c
+index 0000000000000000000000000000000000000000..72adde24409541c232d5f9c25ac5a1103d56ab95
 --- /dev/null
 +++ b/src/main/java/nx3n/flameapi/visual/effects/AuroraPulseEffect.java
-@@ -0,0 +1,28 @@
+@@ -0,0 +1,37 @@
 +package nx3n.flameapi.visual.effects;
 +
++import nx3n.flameapi.visual.VisualDraw;
++import nx3n.flameapi.visual.VisualEffect;
++import nx3n.flameapi.visual.VisualLayerType;
 +import nx3n.flameapi.visual.VisualPalette;
-+import nx3n.flameapi.visual.VisualScreenContext;
-+import nx3n.flameapi.visual.VisualScreenEffect;
++import nx3n.flameapi.visual.VisualRenderContext;
 +
-+public class AuroraPulseEffect implements VisualScreenEffect {
++public class AuroraPulseEffect extends VisualEffect {
 +    private static final int[] PALETTE = new int[]{
 +        0x55FF7A18,
 +        0x5532E1FF,
@@ -707,17 +1996,274 @@ index 0000000000000000000000000000000000000000..f628722400d74fda58b24e4e1c7ae218
 +        0x55FF4E9B
 +    };
 +
++    public AuroraPulseEffect() {
++        super(VisualLayerType.SCREEN);
++    }
++
 +    @Override
-+    public void render(VisualScreenContext context) {
++    public void render(VisualRenderContext context) {
++        if (context.guiGraphics() == null) {
++            return;
++        }
 +        float time = (context.minecraft().level == null ? 0f : context.minecraft().level.getGameTime() / 240f);
 +        int color = VisualPalette.cycle(PALETTE, time);
 +        int width = context.screenWidth();
 +        int height = context.screenHeight();
 +        int thickness = Math.max(6, (int) (12 * context.intensity()));
 +
-+        context.guiGraphics().fill(0, 0, width, thickness, color);
-+        context.guiGraphics().fill(0, 0, thickness, height, color);
-+        context.guiGraphics().fill(width - thickness, 0, width, height, color);
-+        context.guiGraphics().fill(0, height - thickness, width, height, color);
++        VisualDraw.drawRect(context.guiGraphics(), 0, 0, width, thickness, color);
++        VisualDraw.drawRect(context.guiGraphics(), 0, 0, thickness, height, color);
++        VisualDraw.drawRect(context.guiGraphics(), width - thickness, 0, thickness, height, color);
++        VisualDraw.drawRect(context.guiGraphics(), 0, height - thickness, width, thickness, color);
++    }
++}
+diff --git a/src/main/java/nx3n/flameapi/visual/effects/BlurEffect.java b/src/main/java/nx3n/flameapi/visual/effects/BlurEffect.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..569c73f21a986a6e0ca9788b905f5f6bd557fcc4
+--- /dev/null
++++ b/src/main/java/nx3n/flameapi/visual/effects/BlurEffect.java
+@@ -0,0 +1,45 @@
++package nx3n.flameapi.visual.effects;
++
++import nx3n.flameapi.visual.VisualColor;
++import nx3n.flameapi.visual.VisualDraw;
++import nx3n.flameapi.visual.VisualEffect;
++import nx3n.flameapi.visual.VisualLayerType;
++import nx3n.flameapi.visual.VisualRenderContext;
++
++public final class BlurEffect extends VisualEffect {
++    public BlurEffect(VisualLayerType layer) {
++        super(layer);
++        set("radius", 12f);
++        set("alpha", 0.6f);
++        set("color", "#000000");
++    }
++
++    public BlurEffect radius(float radius) {
++        set("radius", radius);
++        return this;
++    }
++
++    public BlurEffect alpha(float alpha) {
++        set("alpha", alpha);
++        return this;
++    }
++
++    public BlurEffect color(String hex) {
++        set("color", hex);
++        return this;
++    }
++
++    @Override
++    public void render(VisualRenderContext context) {
++        if (context.guiGraphics() == null) {
++            return;
++        }
++        int width = context.screenWidth();
++        int height = context.screenHeight();
++        int passes = Math.max(1, (int) props().getFloat("radius", 12f));
++        float alpha = props().getFloat("alpha", 0.6f) * context.intensity();
++        int color = VisualColor.parseHex(props().getString("color", "#000000"), 0xFF000000);
++        int tinted = VisualColor.withAlpha(color, alpha);
++        VisualDraw.drawBlur(context.guiGraphics(), 0, 0, width, height, tinted, passes);
++    }
++}
+diff --git a/src/main/java/nx3n/flameapi/visual/effects/ColorShiftEffect.java b/src/main/java/nx3n/flameapi/visual/effects/ColorShiftEffect.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..bba7cd6c639a671d329b3be2892c1c136038d8be
+--- /dev/null
++++ b/src/main/java/nx3n/flameapi/visual/effects/ColorShiftEffect.java
+@@ -0,0 +1,34 @@
++package nx3n.flameapi.visual.effects;
++
++import nx3n.flameapi.visual.VisualColor;
++import nx3n.flameapi.visual.VisualDraw;
++import nx3n.flameapi.visual.VisualEffect;
++import nx3n.flameapi.visual.VisualLayerType;
++import nx3n.flameapi.visual.VisualPalette;
++import nx3n.flameapi.visual.VisualPalettes;
++import nx3n.flameapi.visual.VisualRenderContext;
++
++public final class ColorShiftEffect extends VisualEffect {
++    public ColorShiftEffect(VisualLayerType layer) {
++        super(layer);
++        set("alpha", 0.35f);
++        set("speed", 0.2f);
++        set("palette", "default");
++    }
++
++    public ColorShiftEffect palette(String name) {
++        set("palette", name);
++        return this;
++    }
++
++    @Override
++    public void render(VisualRenderContext context) {
++        if (context.guiGraphics() == null) {
++            return;
++        }
++        float time = (context.minecraft().level == null ? 0f : context.minecraft().level.getGameTime() * props().getFloat("speed", 0.2f) / 20f);
++        int color = VisualPalette.cycle(VisualPalettes.palette(props().getString("palette", "default")), time);
++        int tinted = VisualColor.withAlpha(color, props().getFloat("alpha", 0.35f) * context.intensity());
++        VisualDraw.drawRect(context.guiGraphics(), 0, 0, context.screenWidth(), context.screenHeight(), tinted);
++    }
++}
+diff --git a/src/main/java/nx3n/flameapi/visual/effects/LabelEffect.java b/src/main/java/nx3n/flameapi/visual/effects/LabelEffect.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..aed1f18a1e45d6e5a235140dae00a8c74ee04c2b
+--- /dev/null
++++ b/src/main/java/nx3n/flameapi/visual/effects/LabelEffect.java
+@@ -0,0 +1,36 @@
++package nx3n.flameapi.visual.effects;
++
++import nx3n.flameapi.visual.VisualColor;
++import nx3n.flameapi.visual.VisualDraw;
++import nx3n.flameapi.visual.VisualEffect;
++import nx3n.flameapi.visual.VisualLayerType;
++import nx3n.flameapi.visual.VisualRenderContext;
++
++public final class LabelEffect extends VisualEffect {
++    public LabelEffect(VisualLayerType layer) {
++        super(layer);
++        set("text", "Flame Visuals");
++        set("x", 8f);
++        set("y", 8f);
++        set("color", "#E2E8FF");
++        set("shadow", 0f);
++    }
++
++    public LabelEffect text(String text) {
++        set("text", text);
++        return this;
++    }
++
++    @Override
++    public void render(VisualRenderContext context) {
++        if (context.guiGraphics() == null) {
++            return;
++        }
++        String text = props().getString("text", "Flame Visuals");
++        int x = (int) props().getFloat("x", 8f);
++        int y = (int) props().getFloat("y", 8f);
++        int color = VisualColor.parseHex(props().getString("color", "#E2E8FF"), 0xFFE2E8FF);
++        boolean shadow = props().getFloat("shadow", 0f) > 0.5f;
++        VisualDraw.drawText(context.guiGraphics(), text, x, y, color, shadow);
++    }
++}
+diff --git a/src/main/java/nx3n/flameapi/visual/effects/NoiseEffect.java b/src/main/java/nx3n/flameapi/visual/effects/NoiseEffect.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..ef998e20e015f1eb3b3bf69fbadebc185ecaad76
+--- /dev/null
++++ b/src/main/java/nx3n/flameapi/visual/effects/NoiseEffect.java
+@@ -0,0 +1,28 @@
++package nx3n.flameapi.visual.effects;
++
++import nx3n.flameapi.visual.VisualColor;
++import nx3n.flameapi.visual.VisualDraw;
++import nx3n.flameapi.visual.VisualEffect;
++import nx3n.flameapi.visual.VisualLayerType;
++import nx3n.flameapi.visual.VisualRenderContext;
++
++public final class NoiseEffect extends VisualEffect {
++    public NoiseEffect(VisualLayerType layer) {
++        super(layer);
++        set("density", 0.4f);
++        set("alpha", 0.2f);
++        set("color", "#FFFFFF");
++    }
++
++    @Override
++    public void render(VisualRenderContext context) {
++        if (context.guiGraphics() == null) {
++            return;
++        }
++        float density = props().getFloat("density", 0.4f);
++        float alpha = props().getFloat("alpha", 0.2f) * context.intensity();
++        int baseColor = VisualColor.parseHex(props().getString("color", "#FFFFFF"), 0xFFFFFFFF);
++        int color = VisualColor.withAlpha(baseColor, alpha);
++        VisualDraw.drawNoise(context.guiGraphics(), 0, 0, context.screenWidth(), context.screenHeight(), color, density);
++    }
++}
+diff --git a/src/main/java/nx3n/flameapi/visual/effects/ScanlineEffect.java b/src/main/java/nx3n/flameapi/visual/effects/ScanlineEffect.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..6e5c5a4f166e3539d1704c8f959313c40f3ab332
+--- /dev/null
++++ b/src/main/java/nx3n/flameapi/visual/effects/ScanlineEffect.java
+@@ -0,0 +1,32 @@
++package nx3n.flameapi.visual.effects;
++
++import nx3n.flameapi.visual.VisualColor;
++import nx3n.flameapi.visual.VisualDraw;
++import nx3n.flameapi.visual.VisualEffect;
++import nx3n.flameapi.visual.VisualLayerType;
++import nx3n.flameapi.visual.VisualRenderContext;
++
++public final class ScanlineEffect extends VisualEffect {
++    public ScanlineEffect(VisualLayerType layer) {
++        super(layer);
++        set("spacing", 4f);
++        set("alpha", 0.2f);
++        set("color", "#0F172A");
++    }
++
++    @Override
++    public void render(VisualRenderContext context) {
++        if (context.guiGraphics() == null) {
++            return;
++        }
++        int width = context.screenWidth();
++        int height = context.screenHeight();
++        int spacing = Math.max(2, (int) props().getFloat("spacing", 4f));
++        float alpha = props().getFloat("alpha", 0.2f) * context.intensity();
++        int baseColor = VisualColor.parseHex(props().getString("color", "#0F172A"), 0xFF0F172A);
++        int color = VisualColor.withAlpha(baseColor, alpha);
++        for (int y = 0; y < height; y += spacing) {
++            VisualDraw.drawRect(context.guiGraphics(), 0, y, width, 1, color);
++        }
++    }
++}
+diff --git a/src/main/java/nx3n/flameapi/visual/effects/VignetteEffect.java b/src/main/java/nx3n/flameapi/visual/effects/VignetteEffect.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..99317f434d8e97f2d872a675cba234a9ff9d5684
+--- /dev/null
++++ b/src/main/java/nx3n/flameapi/visual/effects/VignetteEffect.java
+@@ -0,0 +1,39 @@
++package nx3n.flameapi.visual.effects;
++
++import nx3n.flameapi.visual.VisualColor;
++import nx3n.flameapi.visual.VisualDraw;
++import nx3n.flameapi.visual.VisualEffect;
++import nx3n.flameapi.visual.VisualLayerType;
++import nx3n.flameapi.visual.VisualRenderContext;
++
++public final class VignetteEffect extends VisualEffect {
++    public VignetteEffect(VisualLayerType layer) {
++        super(layer);
++        set("strength", 0.5f);
++        set("color", "#000000");
++    }
++
++    public VignetteEffect strength(float strength) {
++        set("strength", strength);
++        return this;
++    }
++
++    @Override
++    public void render(VisualRenderContext context) {
++        if (context.guiGraphics() == null) {
++            return;
++        }
++        int width = context.screenWidth();
++        int height = context.screenHeight();
++        float strength = props().getFloat("strength", 0.5f) * context.intensity();
++        int baseColor = VisualColor.parseHex(props().getString("color", "#000000"), 0xFF000000);
++        int edgeColor = VisualColor.withAlpha(baseColor, strength);
++        int centerColor = VisualColor.withAlpha(baseColor, strength * 0.2f);
++
++        int border = Math.max(16, (int) (Math.min(width, height) * 0.15f));
++        VisualDraw.drawGradient(context.guiGraphics(), 0, 0, width, border, edgeColor, centerColor);
++        VisualDraw.drawGradient(context.guiGraphics(), 0, height - border, width, border, centerColor, edgeColor);
++        VisualDraw.drawRect(context.guiGraphics(), 0, border, border, height - border * 2, edgeColor);
++        VisualDraw.drawRect(context.guiGraphics(), width - border, border, border, height - border * 2, edgeColor);
 +    }
 +}
