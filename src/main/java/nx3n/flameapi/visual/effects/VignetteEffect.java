@@ -1,39 +1,61 @@
 package nx3n.flameapi.visual.effects;
 
-import nx3n.flameapi.visual.VisualColor;
-import nx3n.flameapi.visual.VisualDraw;
-import nx3n.flameapi.visual.VisualEffect;
-import nx3n.flameapi.visual.VisualLayerType;
-import nx3n.flameapi.visual.VisualRenderContext;
+import nx3n.flameapi.visual.Effect;
+import nx3n.flameapi.visual.Props;
+import nx3n.flameapi.visual.ScreenContext;
+import nx3n.flameapi.visual.draw.Draw;
 
-public final class VignetteEffect extends VisualEffect {
-    public VignetteEffect(VisualLayerType layer) {
-        super(layer);
-        set("strength", 0.5f);
-        set("color", "#000000");
-    }
+/**
+ * Cheap vignette using gradient rectangles.
+ * Props:
+ * - color (int ARGB) default 0x99000000
+ * - size (float 0..1) default 0.22 (fraction of min dimension)
+ * - priority (int)
+ */
+public final class VignetteEffect implements Effect<ScreenContext> {
+    private final Props props;
 
-    public VignetteEffect strength(float strength) {
-        set("strength", strength);
-        return this;
+    public VignetteEffect(Props props) {
+        this.props = props;
     }
 
     @Override
-    public void render(VisualRenderContext context) {
-        if (context.guiGraphics() == null) {
-            return;
-        }
-        int width = context.screenWidth();
-        int height = context.screenHeight();
-        float strength = props().getFloat("strength", 0.5f) * context.intensity();
-        int baseColor = VisualColor.parseHex(props().getString("color", "#000000"), 0xFF000000);
-        int edgeColor = VisualColor.withAlpha(baseColor, strength);
-        int centerColor = VisualColor.withAlpha(baseColor, strength * 0.2f);
+    public int priority() {
+        return props.getInt("priority", 0);
+    }
 
-        int border = Math.max(16, (int) (Math.min(width, height) * 0.15f));
-        VisualDraw.drawGradient(context.guiGraphics(), 0, 0, width, border, edgeColor, centerColor);
-        VisualDraw.drawGradient(context.guiGraphics(), 0, height - border, width, border, centerColor, edgeColor);
-        VisualDraw.drawRect(context.guiGraphics(), 0, border, border, height - border * 2, edgeColor);
-        VisualDraw.drawRect(context.guiGraphics(), width - border, border, border, height - border * 2, edgeColor);
+    @Override
+    public Props props() {
+        return props;
+    }
+
+    @Override
+    public void render(ScreenContext ctx) {
+        int base = props.getInt("color", 0x99000000);
+        float sizeFrac = clamp01(props.getFloat("size", 0.22f));
+        int w = ctx.screenWidth();
+        int h = ctx.screenHeight();
+        int t = (int) (Math.min(w, h) * sizeFrac);
+        if (t <= 0) return;
+
+        // fade alpha by scene intensity
+        int a = (int) (((base >>> 24) & 0xFF) * clamp01(ctx.intensity()));
+        int edge = (base & 0x00FFFFFF) | (a << 24);
+        int center = (base & 0x00FFFFFF); // alpha=0
+
+        // top
+        Draw.gradientRect(ctx.guiGraphics(), 0, 0, w, t, edge, center);
+        // bottom
+        Draw.gradientRect(ctx.guiGraphics(), 0, h - t, w, h, center, edge);
+        // left
+        Draw.gradientRect(ctx.guiGraphics(), 0, 0, t, h, edge, center);
+        // right
+        Draw.gradientRect(ctx.guiGraphics(), w - t, 0, w, h, center, edge);
+    }
+
+    private float clamp01(float v) {
+        if (v < 0f) return 0f;
+        if (v > 1f) return 1f;
+        return v;
     }
 }

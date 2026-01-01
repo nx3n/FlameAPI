@@ -1,10 +1,11 @@
 {
   "required": true,
   "minVersion": "0.8",
-  "package": "nx3n.flameapi.mixin",
+  "package": "nx3n.flameapi.engine",
   "compatibilityLevel": "JAVA_8",
   "refmap": "flameapi.refmap.json",
   "mixins": [
+    "MinecraftMixin"
   ],
   "client": [
   ],
