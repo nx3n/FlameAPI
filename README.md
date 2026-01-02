@@ -4,6 +4,6 @@
 Visual API for minecraft
 
 
-Supports tools:
-CSS, HTML, JS, High-Polygon 3D-models in .obj format
+Supports graphic features:
+CSS, HTML, JS, Lua, High-Polygon 3D-models in .obj, .gbl, .gltf format
 
